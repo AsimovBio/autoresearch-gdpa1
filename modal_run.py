@@ -1,5 +1,5 @@
 """
-Run train.py on a Modal H100 GPU.
+Run train.py on a Modal A100 GPU.
 
 Usage: modal run modal_run.py
 
@@ -24,7 +24,7 @@ app = modal.App("autoresearch-gdpa1", image=image)
 
 @app.function(gpu="A100", timeout=4500)  # 75 min timeout (1hr budget + overhead)
 def run_training() -> str:
-    """Run train.py on H100 and return stdout+stderr."""
+    """Run train.py on A100 and return stdout+stderr."""
     result = subprocess.run(
         ["python", "/root/train.py"],
         capture_output=True,

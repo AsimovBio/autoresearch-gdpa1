@@ -4,7 +4,7 @@ Autonomous model development for predicting antibody developability attributes. 
 
 ## The idea
 
-Give an AI agent a dataset of 246 therapeutic antibodies with experimentally measured developability properties, a baseline model, and let it experiment autonomously overnight on an H100. It modifies the code, trains, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a much better model.
+Give an AI agent a dataset of 246 therapeutic antibodies with experimentally measured developability properties, a baseline model, and let it experiment autonomously overnight on an A100. It modifies the code, trains, checks if the result improved, keeps or discards, and repeats. You wake up in the morning to a log of experiments and (hopefully) a much better model.
 
 The agent modifies `train.py` — everything else is fixed. The metric is **mean Spearman correlation** across 5 targets (higher is better).
 
@@ -44,7 +44,7 @@ modal setup
 # 3. Verify data and encoding (one-time sanity check)
 uv run prepare.py
 
-# 4. Run a single training experiment on H100
+# 4. Run a single training experiment on A100
 modal run modal_run.py
 ```
 

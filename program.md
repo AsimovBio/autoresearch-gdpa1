@@ -34,7 +34,7 @@ Once you get confirmation, kick off the experimentation.
 
 ## Experimentation
 
-Each experiment runs cross-validation across 5 folds with a **fixed time budget of 1 hour** (wall clock). You launch it as: `uv run train.py`. Simple models will finish much faster — the budget exists so you can try expensive approaches (protein language model fine-tuning, large ensembles, extensive hyperparameter searches, etc.) without worrying about timeouts.
+Each experiment runs cross-validation across 5 folds with a **fixed time budget of 1 hour** (wall clock). You launch it as: `modal run modal_run.py` (this runs train.py on a remote A100 GPU via Modal). Simple models will finish much faster — the budget exists so you can try expensive approaches (protein language model fine-tuning, large ensembles, extensive hyperparameter searches, etc.) without worrying about timeouts.
 
 **What you CAN do:**
 - Modify `train.py` — this is the only file you edit. Everything is fair game: model architecture, features (you can use other sequence columns from the CSV), training procedure, hyperparameters, regularization, ensembling, feature engineering, etc.
