@@ -32,7 +32,7 @@ Three files that matter:
 
 ## Quick start
 
-**Requirements:** Python 3.10+, [uv](https://docs.astral.sh/uv/), [Modal](https://modal.com/) account (for H100 GPU execution).
+**Requirements:** Python 3.10+, [uv](https://docs.astral.sh/uv/), [Modal](https://modal.com/) account (for A100 GPU execution).
 
 ```bash
 # 1. Install dependencies
@@ -63,7 +63,7 @@ The agent will establish a baseline, then autonomously iterate on `train.py` —
 ```
 prepare.py      — constants, data loading, encoding, evaluation (do not modify)
 train.py        — model + training loop (agent modifies this)
-modal_run.py    — runs train.py on Modal H100 GPU (do not modify)
+modal_run.py    — runs train.py on Modal A100 GPU (do not modify)
 program.md      — agent instructions
 data/GDPa1.csv  — dataset (246 antibodies, 5 targets)
 pyproject.toml  — dependencies

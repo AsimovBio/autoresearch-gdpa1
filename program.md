@@ -25,7 +25,7 @@ To set up a new experiment, work with the user to:
    - `program.md` — this file, your instructions.
    - `prepare.py` — fixed constants, data loading, sequence encoding, evaluation. **Do not modify.**
    - `train.py` — the file you modify. Model, features, training loop, hyperparameters.
-   - `modal_run.py` — runs train.py on a remote H100 GPU via Modal. **Do not modify.**
+   - `modal_run.py` — runs train.py on a remote A100 GPU via Modal. **Do not modify.**
 4. **Verify data exists**: Check that `data/GDPa1.csv` exists.
 5. **Initialize results.tsv**: Create `results.tsv` with just the header row. The baseline will be recorded after the first run.
 6. **Confirm and go**: Confirm setup looks good.
@@ -115,7 +115,7 @@ LOOP FOREVER:
 1. Look at the git state: the current branch/commit we're on
 2. Tune `train.py` with an experimental idea by directly hacking the code.
 3. git commit
-4. Run the experiment: `modal run modal_run.py > run.log 2>&1` (this executes train.py on a remote H100 GPU via Modal — redirect everything, do NOT use tee or let output flood your context)
+4. Run the experiment: `modal run modal_run.py > run.log 2>&1` (this executes train.py on a remote A100 GPU via Modal — redirect everything, do NOT use tee or let output flood your context)
 5. Read out the results: `grep "^mean_spearman:\|^training_seconds:" run.log`
 6. If the grep output is empty, the run crashed. Run `tail -n 50 run.log` to read the Python stack trace and attempt a fix. If you can't get things to work after more than a few attempts, give up.
 7. Record the results in the tsv (NOTE: do not commit the results.tsv file, leave it untracked by git)

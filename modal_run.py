@@ -22,7 +22,7 @@ image = (
 app = modal.App("autoresearch-gdpa1", image=image)
 
 
-@app.function(gpu="H100", timeout=4500)  # 75 min timeout (1hr budget + overhead)
+@app.function(gpu="A100", timeout=4500)  # 75 min timeout (1hr budget + overhead)
 def run_training() -> str:
     """Run train.py on H100 and return stdout+stderr."""
     result = subprocess.run(
