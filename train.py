@@ -1,8 +1,8 @@
 """
-Antibody developability prediction — ESM-2 embeddings + Ridge + LightGBM ensemble.
+Antibody developability prediction — ESM-2 650M + Ridge + LightGBM + XGBoost ensemble.
 
-Uses ESM-2 (esm2_t6_8M_UR50D, smallest variant) to extract per-antibody
-embeddings, combined with physicochemical features. Ridge + LightGBM ensemble.
+Uses ESM-2 embeddings from both variable and full-length chains.
+Three-model ensemble with optimized blending.
 
 Usage: uv run train.py
 """
@@ -12,6 +12,7 @@ import numpy as np
 import torch
 from sklearn.linear_model import RidgeCV
 import lightgbm as lgb
+import xgboost as xgb
 
 from prepare import (
     load_data, encode_sequences, get_targets, get_fold_splits, evaluate,
@@ -120,25 +121,30 @@ def encode_summary_stats(df):
 
 
 def encode_esm2(df, device):
-    """Extract ESM-2 mean-pooled embeddings for VH and VL sequences."""
+    """Extract ESM-2 mean-pooled embeddings for VH, VL, full HC, full LC."""
     import esm
 
     print("Loading ESM-2 model (esm2_t33_650M_UR50D)...")
     model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
     model = model.eval().to(device)
     batch_converter = alphabet.get_batch_converter()
-    embed_dim = 1280  # t33_650M embedding dimension
+    embed_dim = 1280
 
+    # 4 chains: VH, VL, full HC, full LC
+    chain_cols = [
+        "vh_protein_sequence", "vl_protein_sequence",
+        "hc_protein_sequence", "lc_protein_sequence",
+    ]
     n = len(df)
-    X = np.zeros((n, 2 * embed_dim), dtype=np.float32)
+    X = np.zeros((n, len(chain_cols) * embed_dim), dtype=np.float32)
 
     with torch.no_grad():
-        for chain_idx, col in enumerate(["vh_protein_sequence", "vl_protein_sequence"]):
+        for chain_idx, col in enumerate(chain_cols):
             print(f"  Encoding {col}...")
-            sequences = [(f"seq_{i}", row[col]) for i, (_, row) in enumerate(df.iterrows())]
+            # Strip stop codons (*) and any non-standard characters
+            sequences = [(f"seq_{i}", row[col].replace("*", "")) for i, (_, row) in enumerate(df.iterrows())]
 
-            # Process in batches to avoid OOM
-            batch_size = 32
+            batch_size = 16 if "hc_" in col or "lc_" in col else 32
             for start in range(0, n, batch_size):
                 end = min(start + batch_size, n)
                 batch = sequences[start:end]
@@ -147,7 +153,6 @@ def encode_esm2(df, device):
                 results = model(tokens, repr_layers=[33])
                 representations = results["representations"][33]
 
-                # Mean pool over sequence length (exclude BOS/EOS tokens)
                 for j in range(end - start):
                     seq_len = len(batch[j][1])
                     emb = representations[j, 1:seq_len+1].mean(dim=0).cpu().numpy()
@@ -164,7 +169,7 @@ def encode_esm2(df, device):
 def main():
     t_start = time.time()
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Model: ESM-2 + Ridge + LightGBM ensemble")
+    print(f"Model: ESM-2(650M) + Ridge + LightGBM + XGBoost ensemble")
     print(f"Device: {device}")
     print(f"Time budget: {TIME_BUDGET}s")
     print()
@@ -177,7 +182,6 @@ def main():
     X_summary = encode_summary_stats(df)
     X_esm = encode_esm2(df, device)
 
-    # Features for each model
     X_ridge = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm])
     X_gbm = np.hstack([X_physchem, X_composition, X_summary, X_esm])
 
@@ -192,18 +196,19 @@ def main():
     alphas = np.logspace(-2, 6, 50)
 
     lgb_params = {
-        'objective': 'regression',
-        'metric': 'mse',
-        'verbosity': -1,
-        'n_estimators': 500,
-        'learning_rate': 0.05,
-        'num_leaves': 15,
-        'min_child_samples': 10,
-        'reg_alpha': 1.0,
-        'reg_lambda': 1.0,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'max_depth': 4,
+        'objective': 'regression', 'metric': 'mse', 'verbosity': -1,
+        'n_estimators': 500, 'learning_rate': 0.05,
+        'num_leaves': 15, 'min_child_samples': 10,
+        'reg_alpha': 1.0, 'reg_lambda': 1.0,
+        'subsample': 0.8, 'colsample_bytree': 0.8, 'max_depth': 4,
+    }
+
+    xgb_params = {
+        'objective': 'reg:squarederror', 'verbosity': 0,
+        'n_estimators': 500, 'learning_rate': 0.05,
+        'max_depth': 4, 'min_child_weight': 10,
+        'reg_alpha': 1.0, 'reg_lambda': 1.0,
+        'subsample': 0.8, 'colsample_bytree': 0.8,
     }
 
     for fold in range(N_FOLDS):
@@ -218,22 +223,31 @@ def main():
         X_va_s = (X_ridge[val_idx] - mu) / std
 
         ridge_preds = np.zeros((len(val_idx), n_targets), dtype=np.float32)
-        gbm_preds = np.zeros((len(val_idx), n_targets), dtype=np.float32)
+        lgb_preds = np.zeros((len(val_idx), n_targets), dtype=np.float32)
+        xgb_preds = np.zeros((len(val_idx), n_targets), dtype=np.float32)
 
         for j in range(n_targets):
             mask = ~np.isnan(Y[train_idx, j])
             if mask.sum() < 5:
                 continue
 
+            # Ridge
             ridge = RidgeCV(alphas=alphas, scoring="neg_mean_squared_error")
             ridge.fit(X_tr_s[mask], Y[train_idx[mask], j])
             ridge_preds[:, j] = ridge.predict(X_va_s)
 
-            model = lgb.LGBMRegressor(**lgb_params)
-            model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
-            gbm_preds[:, j] = model.predict(X_gbm[val_idx])
+            # LightGBM
+            lgb_model = lgb.LGBMRegressor(**lgb_params)
+            lgb_model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
+            lgb_preds[:, j] = lgb_model.predict(X_gbm[val_idx])
 
-        all_preds[val_idx] = 0.6 * ridge_preds + 0.4 * gbm_preds
+            # XGBoost
+            xgb_model = xgb.XGBRegressor(**xgb_params)
+            xgb_model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
+            xgb_preds[:, j] = xgb_model.predict(X_gbm[val_idx])
+
+        # Blend: 0.4 Ridge + 0.3 LightGBM + 0.3 XGBoost
+        all_preds[val_idx] = 0.4 * ridge_preds + 0.3 * lgb_preds + 0.3 * xgb_preds
 
     print()
 
@@ -247,7 +261,7 @@ def main():
     for name, rho in per_target.items():
         print(f"  {name:20s}: {rho:.4f}")
     print(f"training_seconds: {total_time:.1f}")
-    print(f"model:            ESM-2(t33_650M) + Ridge + LightGBM ensemble (0.6/0.4)")
+    print(f"model:            ESM-2(t33_650M) 4-chain + Ridge + LightGBM + XGBoost (0.4/0.3/0.3)")
 
 
 if __name__ == "__main__":
