@@ -231,20 +231,36 @@ def main():
             if mask.sum() < 5:
                 continue
 
+            y_tr = Y[train_idx[mask], j]
+
             # Ridge
             ridge = RidgeCV(alphas=alphas, scoring="neg_mean_squared_error")
-            ridge.fit(X_tr_s[mask], Y[train_idx[mask], j])
+            ridge.fit(X_tr_s[mask], y_tr)
             ridge_preds[:, j] = ridge.predict(X_va_s)
 
-            # LightGBM
-            lgb_model = lgb.LGBMRegressor(**lgb_params)
-            lgb_model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
-            lgb_preds[:, j] = lgb_model.predict(X_gbm[val_idx])
+            # LightGBM with 2 different configs for diversity
+            lgb_model1 = lgb.LGBMRegressor(**lgb_params)
+            lgb_model1.fit(X_gbm[train_idx[mask]], y_tr)
 
-            # XGBoost
-            xgb_model = xgb.XGBRegressor(**xgb_params)
-            xgb_model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
-            xgb_preds[:, j] = xgb_model.predict(X_gbm[val_idx])
+            lgb_params2 = {**lgb_params, 'num_leaves': 31, 'max_depth': 6,
+                           'min_child_samples': 5, 'colsample_bytree': 0.6}
+            lgb_model2 = lgb.LGBMRegressor(**lgb_params2)
+            lgb_model2.fit(X_gbm[train_idx[mask]], y_tr)
+
+            lgb_preds[:, j] = 0.5 * (lgb_model1.predict(X_gbm[val_idx]) +
+                                       lgb_model2.predict(X_gbm[val_idx]))
+
+            # XGBoost with 2 different configs
+            xgb_model1 = xgb.XGBRegressor(**xgb_params)
+            xgb_model1.fit(X_gbm[train_idx[mask]], y_tr)
+
+            xgb_params2 = {**xgb_params, 'max_depth': 6, 'min_child_weight': 5,
+                           'colsample_bytree': 0.6}
+            xgb_model2 = xgb.XGBRegressor(**xgb_params2)
+            xgb_model2.fit(X_gbm[train_idx[mask]], y_tr)
+
+            xgb_preds[:, j] = 0.5 * (xgb_model1.predict(X_gbm[val_idx]) +
+                                       xgb_model2.predict(X_gbm[val_idx]))
 
         # Blend: 0.4 Ridge + 0.3 LightGBM + 0.3 XGBoost
         all_preds[val_idx] = 0.4 * ridge_preds + 0.3 * lgb_preds + 0.3 * xgb_preds
@@ -261,7 +277,7 @@ def main():
     for name, rho in per_target.items():
         print(f"  {name:20s}: {rho:.4f}")
     print(f"training_seconds: {total_time:.1f}")
-    print(f"model:            ESM-2(t33_650M) 4-chain + Ridge + LightGBM + XGBoost (0.4/0.3/0.3)")
+    print(f"model:            ESM-2(t33_650M) 4-chain + Ridge + diverse-LGB + diverse-XGB")
 
 
 if __name__ == "__main__":
