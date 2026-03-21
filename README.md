@@ -79,7 +79,7 @@ modal run modal_run.py
 
 ## Results: `autoresearch/mar15` run
 
-The agent ran 53 experiments, improving mean Spearman from **0.119 to 0.414** (3.5x improvement). Full log in `results.tsv`; key milestones:
+The agent ran 56 experiments, improving mean Spearman from **0.119 to 0.417** (3.5x improvement). Full log in `results.tsv`; key milestones:
 
 | # | Mean Spearman | Status | Description |
 |---|--------------|--------|-------------|
@@ -92,27 +92,27 @@ The agent ran 53 experiments, improving mean Spearman from **0.119 to 0.414** (3
 | 22 | 0.385 | keep | Ridge-heavy blend 0.6/0.2/0.2 |
 | 33 | 0.386 | keep | Drop one-hot from Ridge |
 | 34 | 0.400 | keep | Drop physicochemical from Ridge |
-| 38 | 0.403 | keep | Drop physicochemical from GBMs too |
 | 40 | 0.404 | keep | Drop composition from GBMs |
 | 46 | 0.408 | keep | Per-target blend weights |
-| **52** | **0.414** | **keep** | **Optimized per-target Ridge/GBM weights** |
+| 52 | 0.414 | keep | Optimized per-target Ridge/GBM weights |
+| **56** | **0.417** | **keep** | **HIC/PR_CHO pure Ridge, Tm2 pure GBM** |
 
 ### Per-target breakdown (best model)
 
-| Target | Spearman | Ridge weight |
+| Target | Spearman | Best model |
 |---|---|---|
-| PR_CHO | 0.541 | 0.7 |
-| HIC | 0.508 | 0.7 |
-| AC-SINS pH 7.4 | 0.402 | 0.5 |
-| Tm2 | 0.334 | 0.0 |
-| Titer | 0.287 | 0.3 |
+| PR_CHO | 0.540 | Pure Ridge |
+| HIC | 0.522 | Pure Ridge |
+| AC-SINS pH 7.4 | 0.402 | 50/50 Ridge/GBM |
+| Tm2 | 0.334 | Pure GBM |
+| Titer | 0.287 | 30% Ridge / 70% GBM |
 
 ### Key findings
 
 - **ESM-2 embeddings were the single biggest win.** Going from hand-crafted features to frozen ESM-2 650M embeddings roughly doubled performance (0.151 → 0.284). Including full-length heavy/light chain embeddings (not just variable regions) pushed it further to 0.375. Full-length chains are critical — dropping them collapses Tm2 from 0.33 to 0.10.
 - **Classical ML > neural nets for this dataset size.** Ridge + gradient boosting ensembles beat the MLP baseline. Fine-tuning ESM-2 directly on 246 samples caused overfitting.
 - **Each model type needs different features.** Ridge does best with dense, low-noise features (ESM + composition + summary + metadata). GBMs do best with sparse high-dimensional features (one-hot + ESM + summary + metadata). Physicochemical features hurt both when ESM is present. This realization took us from 0.385 to 0.404.
-- **Per-target blend weights were the final breakthrough.** Different targets have radically different optimal model blends. Tm2 (thermal stability) does best with pure GBM (Ridge weight = 0.0), while HIC and PR_CHO do best at 70% Ridge. This took us from 0.404 to 0.414.
+- **Per-target blend weights were the biggest late-game breakthrough.** Different targets have radically different optimal model blends. HIC and PR_CHO are pure Ridge problems. Tm2 (thermal stability) is a pure GBM problem. AC-SINS and Titer are mixed. Per-target optimization took us from 0.404 to 0.417 — a bigger jump than any single architectural change after the initial ESM integration.
 - **Simplification was key.** Many of the best experiments involved *removing* features or complexity, not adding it. Less is more when your embeddings are good.
 
 ## Running the agent
