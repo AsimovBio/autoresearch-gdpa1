@@ -79,7 +79,7 @@ modal run modal_run.py
 
 ## Results: `autoresearch/mar15` run
 
-The agent ran 56 experiments, improving mean Spearman from **0.119 to 0.417** (3.5x improvement). Full log in `results.tsv`; key milestones:
+The agent ran 64 experiments, improving mean Spearman from **0.119 to 0.419** (3.5x improvement). Full log in `results.tsv`; key milestones:
 
 | # | Mean Spearman | Status | Description |
 |---|--------------|--------|-------------|
@@ -95,17 +95,18 @@ The agent ran 56 experiments, improving mean Spearman from **0.119 to 0.417** (3
 | 40 | 0.404 | keep | Drop composition from GBMs |
 | 46 | 0.408 | keep | Per-target blend weights |
 | 52 | 0.414 | keep | Optimized per-target Ridge/GBM weights |
-| **56** | **0.417** | **keep** | **HIC/PR_CHO pure Ridge, Tm2 pure GBM** |
+| 56 | 0.417 | keep | HIC/PR_CHO pure Ridge, Tm2 pure GBM |
+| **64** | **0.419** | **keep** | **Titer Ridge weight optimized to 0.7** |
 
 ### Per-target breakdown (best model)
 
-| Target | Spearman | Best model |
+| Target | Spearman | Ridge weight |
 |---|---|---|
-| PR_CHO | 0.540 | Pure Ridge |
-| HIC | 0.522 | Pure Ridge |
-| AC-SINS pH 7.4 | 0.402 | 50/50 Ridge/GBM |
-| Tm2 | 0.334 | Pure GBM |
-| Titer | 0.287 | 30% Ridge / 70% GBM |
+| PR_CHO | 0.540 | 1.0 (pure Ridge) |
+| HIC | 0.522 | 1.0 (pure Ridge) |
+| AC-SINS pH 7.4 | 0.405 | 0.6 |
+| Titer | 0.295 | 0.7 |
+| Tm2 | 0.334 | 0.0 (pure GBM) |
 
 ### Key findings
 
