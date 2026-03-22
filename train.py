@@ -280,8 +280,14 @@ def main():
             xgb_preds[:, j] = 0.5 * (xgb_model1.predict(X_gbm[val_idx]) +
                                        xgb_model2.predict(X_gbm[val_idx])) * y_std + y_mean
 
-        # Blend: 0.6 Ridge + 0.2 LightGBM + 0.2 XGBoost
-        all_preds[val_idx] = 0.6 * ridge_preds + 0.2 * lgb_preds + 0.2 * xgb_preds
+        # Per-target blend weights (Ridge stronger for HIC/PR_CHO, GBMs for Tm2/Titer)
+        # Target order: HIC, Tm2, PR_CHO, AC-SINS_pH7.4, Titer
+        ridge_w = np.array([0.7, 0.0, 0.7, 0.5, 0.3])
+        gbm_w = (1.0 - ridge_w) / 2.0
+        for j in range(n_targets):
+            all_preds[val_idx, j] = (ridge_w[j] * ridge_preds[:, j] +
+                                      gbm_w[j] * lgb_preds[:, j] +
+                                      gbm_w[j] * xgb_preds[:, j])
 
     print()
 
