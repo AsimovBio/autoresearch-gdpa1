@@ -1,13 +1,18 @@
 """
-Antibody developability prediction — Ensemble of Ridge + LightGBM.
+Antibody developability prediction — ESM-2 650M + Ridge + LightGBM + XGBoost ensemble.
+
+Uses ESM-2 embeddings from both variable and full-length chains.
+Three-model ensemble with optimized blending.
 
 Usage: uv run train.py
 """
 
 import time
 import numpy as np
+import torch
 from sklearn.linear_model import RidgeCV
 import lightgbm as lgb
+import xgboost as xgb
 
 from prepare import (
     load_data, encode_sequences, get_targets, get_fold_splits, evaluate,
@@ -51,7 +56,6 @@ POLARITY = {
     '-': 0.0,
 }
 
-# Beta-sheet propensity (Chou-Fasman)
 BETA_SHEET = {
     'A': 0.83, 'C': 1.19, 'D': 0.54, 'E': 0.37, 'F': 1.38,
     'G': 0.75, 'H': 0.87, 'I': 1.60, 'K': 0.74, 'L': 1.30,
@@ -65,29 +69,24 @@ N_PROPERTIES = len(PROPERTY_DICTS)
 
 
 def encode_physicochemical(df):
-    """Encode sequences as per-position physicochemical properties."""
     n = len(df)
     n_feat = 2 * SEQ_LEN_PER_CHAIN * N_PROPERTIES
     X = np.zeros((n, n_feat), dtype=np.float32)
-
     for i, (_, row) in enumerate(df.iterrows()):
         for chain_idx, col in enumerate(["heavy_aligned_aho", "light_aligned_aho"]):
             seq = row[col]
             offset = chain_idx * SEQ_LEN_PER_CHAIN * N_PROPERTIES
             for pos, aa in enumerate(seq):
                 for p, prop_dict in enumerate(PROPERTY_DICTS):
-                    feat_idx = offset + pos * N_PROPERTIES + p
-                    X[i, feat_idx] = prop_dict.get(aa, 0.0)
+                    X[i, offset + pos * N_PROPERTIES + p] = prop_dict.get(aa, 0.0)
     return X
 
 
 def encode_aa_composition(df):
-    """Encode amino acid composition (fraction of each AA in each chain)."""
     alphabet = GAP_CHAR + AMINO_ACIDS
     n = len(df)
     n_feat = 2 * len(alphabet)
     X = np.zeros((n, n_feat), dtype=np.float32)
-
     for i, (_, row) in enumerate(df.iterrows()):
         for chain_idx, col in enumerate(["heavy_aligned_aho", "light_aligned_aho"]):
             seq = row[col]
@@ -101,12 +100,9 @@ def encode_aa_composition(df):
 
 
 def encode_summary_stats(df):
-    """Global summary statistics: net charge, mean hydrophobicity, etc."""
     n = len(df)
-    # Per chain: mean/std of each property + net charge + aromatic fraction + length
     n_stats = 2 * (N_PROPERTIES * 2 + 3)
     X = np.zeros((n, n_stats), dtype=np.float32)
-
     for i, (_, row) in enumerate(df.iterrows()):
         for chain_idx, col in enumerate(["heavy_aligned_aho", "light_aligned_aho"]):
             seq = row[col]
@@ -118,12 +114,51 @@ def encode_summary_stats(df):
                 vals = [prop_dict.get(aa, 0.0) for aa in non_gap]
                 X[i, offset + p * 2] = np.mean(vals)
                 X[i, offset + p * 2 + 1] = np.std(vals)
-            # Net charge
             X[i, offset + N_PROPERTIES * 2] = sum(CHARGE.get(aa, 0) for aa in non_gap)
-            # Aromatic fraction
             X[i, offset + N_PROPERTIES * 2 + 1] = sum(1 for aa in non_gap if aa in 'FWY') / len(non_gap)
-            # Non-gap length
             X[i, offset + N_PROPERTIES * 2 + 2] = len(non_gap)
+    return X
+
+
+def encode_esm2(df, device):
+    """Extract ESM-2 mean-pooled embeddings for VH, VL, full HC, full LC."""
+    import esm
+
+    print("Loading ESM-2 model (esm2_t33_650M_UR50D)...")
+    model, alphabet = esm.pretrained.esm2_t33_650M_UR50D()
+    model = model.eval().to(device)
+    batch_converter = alphabet.get_batch_converter()
+    embed_dim = 1280
+
+    # 4 chains: VH, VL, full HC, full LC
+    chain_cols = [
+        "vh_protein_sequence", "vl_protein_sequence",
+        "hc_protein_sequence", "lc_protein_sequence",
+    ]
+    n = len(df)
+    X = np.zeros((n, len(chain_cols) * embed_dim), dtype=np.float32)
+
+    with torch.no_grad():
+        for chain_idx, col in enumerate(chain_cols):
+            print(f"  Encoding {col}...")
+            # Strip stop codons (*) and any non-standard characters
+            sequences = [(f"seq_{i}", row[col].replace("*", "")) for i, (_, row) in enumerate(df.iterrows())]
+
+            batch_size = 16 if "hc_" in col or "lc_" in col else 32
+            for start in range(0, n, batch_size):
+                end = min(start + batch_size, n)
+                batch = sequences[start:end]
+                _, _, tokens = batch_converter(batch)
+                tokens = tokens.to(device)
+                results = model(tokens, repr_layers=[33])
+                representations = results["representations"][33]
+
+                for j in range(end - start):
+                    seq_len = len(batch[j][1])
+                    emb = representations[j, 1:seq_len+1].mean(dim=0).cpu().numpy()
+                    X[start + j, chain_idx * embed_dim:(chain_idx + 1) * embed_dim] = emb
+
+    print(f"  ESM-2 embeddings: {X.shape}")
     return X
 
 
@@ -133,7 +168,9 @@ def encode_summary_stats(df):
 
 def main():
     t_start = time.time()
-    print("Model: Ridge + LightGBM ensemble")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    print(f"Model: ESM-2(650M) + Ridge + LightGBM + XGBoost ensemble")
+    print(f"Device: {device}")
     print(f"Time budget: {TIME_BUDGET}s")
     print()
 
@@ -143,10 +180,10 @@ def main():
     X_physchem = encode_physicochemical(df)
     X_composition = encode_aa_composition(df)
     X_summary = encode_summary_stats(df)
+    X_esm = encode_esm2(df, device)
 
-    # Ridge uses all features; LightGBM uses physicochemical + composition + summary (lower dim)
-    X_ridge = np.hstack([X_onehot, X_physchem, X_composition, X_summary])
-    X_gbm = np.hstack([X_physchem, X_composition, X_summary])
+    X_ridge = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm])
+    X_gbm = np.hstack([X_physchem, X_composition, X_summary, X_esm])
 
     Y = get_targets(df)
     n_targets = Y.shape[1]
@@ -159,25 +196,26 @@ def main():
     alphas = np.logspace(-2, 6, 50)
 
     lgb_params = {
-        'objective': 'regression',
-        'metric': 'mse',
-        'verbosity': -1,
-        'n_estimators': 500,
-        'learning_rate': 0.05,
-        'num_leaves': 15,
-        'min_child_samples': 10,
-        'reg_alpha': 1.0,
-        'reg_lambda': 1.0,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'max_depth': 4,
+        'objective': 'regression', 'metric': 'mse', 'verbosity': -1,
+        'n_estimators': 500, 'learning_rate': 0.05,
+        'num_leaves': 15, 'min_child_samples': 10,
+        'reg_alpha': 1.0, 'reg_lambda': 1.0,
+        'subsample': 0.8, 'colsample_bytree': 0.8, 'max_depth': 4,
+    }
+
+    xgb_params = {
+        'objective': 'reg:squarederror', 'verbosity': 0,
+        'n_estimators': 500, 'learning_rate': 0.05,
+        'max_depth': 4, 'min_child_weight': 10,
+        'reg_alpha': 1.0, 'reg_lambda': 1.0,
+        'subsample': 0.8, 'colsample_bytree': 0.8,
     }
 
     for fold in range(N_FOLDS):
         train_idx, val_idx = get_fold_splits(df, fold)
         print(f"Fold {fold}: {len(train_idx)} train, {len(val_idx)} val")
 
-        # Ridge predictions
+        # Standardize for Ridge
         mu = X_ridge[train_idx].mean(axis=0)
         std = X_ridge[train_idx].std(axis=0)
         std[std < 1e-8] = 1.0
@@ -185,7 +223,8 @@ def main():
         X_va_s = (X_ridge[val_idx] - mu) / std
 
         ridge_preds = np.zeros((len(val_idx), n_targets), dtype=np.float32)
-        gbm_preds = np.zeros((len(val_idx), n_targets), dtype=np.float32)
+        lgb_preds = np.zeros((len(val_idx), n_targets), dtype=np.float32)
+        xgb_preds = np.zeros((len(val_idx), n_targets), dtype=np.float32)
 
         for j in range(n_targets):
             mask = ~np.isnan(Y[train_idx, j])
@@ -198,12 +237,17 @@ def main():
             ridge_preds[:, j] = ridge.predict(X_va_s)
 
             # LightGBM
-            model = lgb.LGBMRegressor(**lgb_params)
-            model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
-            gbm_preds[:, j] = model.predict(X_gbm[val_idx])
+            lgb_model = lgb.LGBMRegressor(**lgb_params)
+            lgb_model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
+            lgb_preds[:, j] = lgb_model.predict(X_gbm[val_idx])
 
-        # Blend: 0.6 Ridge + 0.4 LightGBM
-        all_preds[val_idx] = 0.6 * ridge_preds + 0.4 * gbm_preds
+            # XGBoost
+            xgb_model = xgb.XGBRegressor(**xgb_params)
+            xgb_model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
+            xgb_preds[:, j] = xgb_model.predict(X_gbm[val_idx])
+
+        # Blend: 0.4 Ridge + 0.3 LightGBM + 0.3 XGBoost
+        all_preds[val_idx] = 0.4 * ridge_preds + 0.3 * lgb_preds + 0.3 * xgb_preds
 
     print()
 
@@ -217,7 +261,7 @@ def main():
     for name, rho in per_target.items():
         print(f"  {name:20s}: {rho:.4f}")
     print(f"training_seconds: {total_time:.1f}")
-    print(f"model:            Ridge + LightGBM ensemble (0.6/0.4)")
+    print(f"model:            ESM-2(t33_650M) 4-chain + Ridge + LightGBM + XGBoost (0.4/0.3/0.3)")
 
 
 if __name__ == "__main__":
