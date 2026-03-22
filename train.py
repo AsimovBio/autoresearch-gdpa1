@@ -182,8 +182,18 @@ def main():
     X_summary = encode_summary_stats(df)
     X_esm = encode_esm2(df, device)
 
-    X_ridge = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm])
-    X_gbm = np.hstack([X_physchem, X_composition, X_summary, X_esm])
+    # Encode antibody metadata (IgG subtype, light chain type)
+    X_meta = np.zeros((len(df), 5), dtype=np.float32)  # IgG1, IgG2, IgG4, Kappa, Lambda
+    for i, (_, row) in enumerate(df.iterrows()):
+        if row['hc_subtype'] == 'IgG1': X_meta[i, 0] = 1
+        elif row['hc_subtype'] == 'IgG2': X_meta[i, 1] = 1
+        elif row['hc_subtype'] == 'IgG4': X_meta[i, 2] = 1
+        if row['lc_subtype'] == 'Kappa': X_meta[i, 3] = 1
+        elif row['lc_subtype'] == 'Lambda': X_meta[i, 4] = 1
+    print(f"  Metadata features: {X_meta.shape[1]}")
+
+    X_ridge = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm, X_meta])
+    X_gbm = np.hstack([X_physchem, X_composition, X_summary, X_esm, X_meta])
 
     Y = get_targets(df)
     n_targets = Y.shape[1]
@@ -231,20 +241,44 @@ def main():
             if mask.sum() < 5:
                 continue
 
-            # Ridge
+            y_tr = Y[train_idx[mask], j]
+
+            # Z-score targets for GBMs (standardize per fold)
+            y_mean = y_tr.mean()
+            y_std = y_tr.std()
+            if y_std < 1e-8:
+                y_std = 1.0
+            y_tr_z = (y_tr - y_mean) / y_std
+
+            # Ridge on raw targets (handles its own regularization)
             ridge = RidgeCV(alphas=alphas, scoring="neg_mean_squared_error")
-            ridge.fit(X_tr_s[mask], Y[train_idx[mask], j])
+            ridge.fit(X_tr_s[mask], y_tr)
             ridge_preds[:, j] = ridge.predict(X_va_s)
 
-            # LightGBM
-            lgb_model = lgb.LGBMRegressor(**lgb_params)
-            lgb_model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
-            lgb_preds[:, j] = lgb_model.predict(X_gbm[val_idx])
+            # LightGBM on z-scored targets
+            lgb_model1 = lgb.LGBMRegressor(**lgb_params)
+            lgb_model1.fit(X_gbm[train_idx[mask]], y_tr_z)
 
-            # XGBoost
-            xgb_model = xgb.XGBRegressor(**xgb_params)
-            xgb_model.fit(X_gbm[train_idx[mask]], Y[train_idx[mask], j])
-            xgb_preds[:, j] = xgb_model.predict(X_gbm[val_idx])
+            lgb_params2 = {**lgb_params, 'num_leaves': 31, 'max_depth': 6,
+                           'min_child_samples': 5, 'colsample_bytree': 0.6}
+            lgb_model2 = lgb.LGBMRegressor(**lgb_params2)
+            lgb_model2.fit(X_gbm[train_idx[mask]], y_tr_z)
+
+            # Inverse z-score transform
+            lgb_preds[:, j] = 0.5 * (lgb_model1.predict(X_gbm[val_idx]) +
+                                       lgb_model2.predict(X_gbm[val_idx])) * y_std + y_mean
+
+            # XGBoost on z-scored targets
+            xgb_model1 = xgb.XGBRegressor(**xgb_params)
+            xgb_model1.fit(X_gbm[train_idx[mask]], y_tr_z)
+
+            xgb_params2 = {**xgb_params, 'max_depth': 6, 'min_child_weight': 5,
+                           'colsample_bytree': 0.6}
+            xgb_model2 = xgb.XGBRegressor(**xgb_params2)
+            xgb_model2.fit(X_gbm[train_idx[mask]], y_tr_z)
+
+            xgb_preds[:, j] = 0.5 * (xgb_model1.predict(X_gbm[val_idx]) +
+                                       xgb_model2.predict(X_gbm[val_idx])) * y_std + y_mean
 
         # Blend: 0.4 Ridge + 0.3 LightGBM + 0.3 XGBoost
         all_preds[val_idx] = 0.4 * ridge_preds + 0.3 * lgb_preds + 0.3 * xgb_preds
@@ -261,7 +295,7 @@ def main():
     for name, rho in per_target.items():
         print(f"  {name:20s}: {rho:.4f}")
     print(f"training_seconds: {total_time:.1f}")
-    print(f"model:            ESM-2(t33_650M) 4-chain + Ridge + LightGBM + XGBoost (0.4/0.3/0.3)")
+    print(f"model:            ESM-2(t33_650M) + metadata + z-scored GBMs")
 
 
 if __name__ == "__main__":
