@@ -264,9 +264,14 @@ def main():
             lgb_model1 = lgb.LGBMRegressor(**lgb_params)
             lgb_model1.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
-            lgb_params2 = {**lgb_params, 'num_leaves': 31, 'max_depth': 6,
+            # AC-SINS gets less diverse config 2 (depth 5), others get depth 6
+            if j == 3:  # AC-SINS
+                lgb_p2 = {**lgb_params, 'num_leaves': 20, 'max_depth': 5,
+                           'min_child_samples': 8, 'colsample_bytree': 0.7}
+            else:
+                lgb_p2 = {**lgb_params, 'num_leaves': 31, 'max_depth': 6,
                            'min_child_samples': 5, 'colsample_bytree': 0.6}
-            lgb_model2 = lgb.LGBMRegressor(**lgb_params2)
+            lgb_model2 = lgb.LGBMRegressor(**lgb_p2)
             lgb_model2.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
             # Inverse z-score transform
@@ -277,9 +282,13 @@ def main():
             xgb_model1 = xgb.XGBRegressor(**xgb_params)
             xgb_model1.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
-            xgb_params2 = {**xgb_params, 'max_depth': 6, 'min_child_weight': 5,
+            if j == 3:  # AC-SINS
+                xgb_p2 = {**xgb_params, 'max_depth': 5, 'min_child_weight': 8,
+                           'colsample_bytree': 0.7}
+            else:
+                xgb_p2 = {**xgb_params, 'max_depth': 6, 'min_child_weight': 5,
                            'colsample_bytree': 0.6}
-            xgb_model2 = xgb.XGBRegressor(**xgb_params2)
+            xgb_model2 = xgb.XGBRegressor(**xgb_p2)
             xgb_model2.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
             xgb_preds[:, j] = 0.5 * (xgb_model1.predict(X_gbm_j[val_idx]) +
