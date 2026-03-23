@@ -209,7 +209,7 @@ def main():
 
     lgb_params = {
         'objective': 'regression', 'metric': 'mse', 'verbosity': -1,
-        'n_estimators': 500, 'learning_rate': 0.05,
+        'n_estimators': 700, 'learning_rate': 0.04,
         'num_leaves': 15, 'min_child_samples': 10,
         'reg_alpha': 1.0, 'reg_lambda': 1.0,
         'subsample': 0.8, 'colsample_bytree': 0.8, 'max_depth': 4,
@@ -217,7 +217,7 @@ def main():
 
     xgb_params = {
         'objective': 'reg:squarederror', 'verbosity': 0,
-        'n_estimators': 500, 'learning_rate': 0.05,
+        'n_estimators': 700, 'learning_rate': 0.04,
         'max_depth': 4, 'min_child_weight': 10,
         'reg_alpha': 1.0, 'reg_lambda': 1.0,
         'subsample': 0.8, 'colsample_bytree': 0.8,
