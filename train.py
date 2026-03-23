@@ -194,6 +194,8 @@ def main():
 
     X_ridge = np.hstack([X_composition, X_summary, X_esm, X_meta])
     X_gbm = np.hstack([X_onehot, X_summary, X_esm, X_meta])
+    # Tm2-specific GBM features: add composition + physchem back (Tm2 is pure GBM)
+    X_gbm_tm2 = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm, X_meta])
 
     Y = get_targets(df)
     n_targets = Y.shape[1]
@@ -255,34 +257,37 @@ def main():
             ridge.fit(X_tr_s[mask], y_tr)
             ridge_preds[:, j] = ridge.predict(X_va_s)
 
+            # Select GBM features (Tm2 gets enriched feature set)
+            X_gbm_j = X_gbm_tm2 if j == 1 else X_gbm
+
             # LightGBM on z-scored targets
             lgb_model1 = lgb.LGBMRegressor(**lgb_params)
-            lgb_model1.fit(X_gbm[train_idx[mask]], y_tr_z)
+            lgb_model1.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
             lgb_params2 = {**lgb_params, 'num_leaves': 31, 'max_depth': 6,
                            'min_child_samples': 5, 'colsample_bytree': 0.6}
             lgb_model2 = lgb.LGBMRegressor(**lgb_params2)
-            lgb_model2.fit(X_gbm[train_idx[mask]], y_tr_z)
+            lgb_model2.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
             # Inverse z-score transform
-            lgb_preds[:, j] = 0.5 * (lgb_model1.predict(X_gbm[val_idx]) +
-                                       lgb_model2.predict(X_gbm[val_idx])) * y_std + y_mean
+            lgb_preds[:, j] = 0.5 * (lgb_model1.predict(X_gbm_j[val_idx]) +
+                                       lgb_model2.predict(X_gbm_j[val_idx])) * y_std + y_mean
 
             # XGBoost on z-scored targets
             xgb_model1 = xgb.XGBRegressor(**xgb_params)
-            xgb_model1.fit(X_gbm[train_idx[mask]], y_tr_z)
+            xgb_model1.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
             xgb_params2 = {**xgb_params, 'max_depth': 6, 'min_child_weight': 5,
                            'colsample_bytree': 0.6}
             xgb_model2 = xgb.XGBRegressor(**xgb_params2)
-            xgb_model2.fit(X_gbm[train_idx[mask]], y_tr_z)
+            xgb_model2.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
-            xgb_preds[:, j] = 0.5 * (xgb_model1.predict(X_gbm[val_idx]) +
-                                       xgb_model2.predict(X_gbm[val_idx])) * y_std + y_mean
+            xgb_preds[:, j] = 0.5 * (xgb_model1.predict(X_gbm_j[val_idx]) +
+                                       xgb_model2.predict(X_gbm_j[val_idx])) * y_std + y_mean
 
         # Per-target blend weights (Ridge stronger for HIC/PR_CHO, GBMs for Tm2/Titer)
         # Target order: HIC, Tm2, PR_CHO, AC-SINS_pH7.4, Titer
-        ridge_w = np.array([1.0, 0.0, 1.0, 0.6, 0.5])
+        ridge_w = np.array([1.0, 0.0, 1.0, 0.6, 0.7])
         gbm_w = (1.0 - ridge_w) / 2.0
         for j in range(n_targets):
             all_preds[val_idx, j] = (ridge_w[j] * ridge_preds[:, j] +
