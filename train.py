@@ -193,7 +193,7 @@ def main():
     print(f"  Metadata features: {X_meta.shape[1]}")
 
     X_ridge = np.hstack([X_composition, X_summary, X_esm, X_meta])
-    X_gbm = np.hstack([X_onehot, X_summary, X_esm, X_meta])
+    X_gbm = np.hstack([X_onehot, X_composition, X_summary, X_esm, X_meta])
     # Tm2-specific GBM features: add composition + physchem back (Tm2 is pure GBM)
     X_gbm_tm2 = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm, X_meta])
 
@@ -209,7 +209,7 @@ def main():
 
     lgb_params = {
         'objective': 'regression', 'metric': 'mse', 'verbosity': -1,
-        'n_estimators': 500, 'learning_rate': 0.05,
+        'n_estimators': 700, 'learning_rate': 0.04,
         'num_leaves': 15, 'min_child_samples': 10,
         'reg_alpha': 1.0, 'reg_lambda': 1.0,
         'subsample': 0.8, 'colsample_bytree': 0.8, 'max_depth': 4,
@@ -217,7 +217,7 @@ def main():
 
     xgb_params = {
         'objective': 'reg:squarederror', 'verbosity': 0,
-        'n_estimators': 500, 'learning_rate': 0.05,
+        'n_estimators': 700, 'learning_rate': 0.04,
         'max_depth': 4, 'min_child_weight': 10,
         'reg_alpha': 1.0, 'reg_lambda': 1.0,
         'subsample': 0.8, 'colsample_bytree': 0.8,
@@ -264,9 +264,14 @@ def main():
             lgb_model1 = lgb.LGBMRegressor(**lgb_params)
             lgb_model1.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
-            lgb_params2 = {**lgb_params, 'num_leaves': 31, 'max_depth': 6,
+            # AC-SINS gets less diverse config 2 (depth 5), others get depth 6
+            if j == 3:  # AC-SINS
+                lgb_p2 = {**lgb_params, 'num_leaves': 20, 'max_depth': 5,
+                           'min_child_samples': 8, 'colsample_bytree': 0.7}
+            else:
+                lgb_p2 = {**lgb_params, 'num_leaves': 31, 'max_depth': 6,
                            'min_child_samples': 5, 'colsample_bytree': 0.6}
-            lgb_model2 = lgb.LGBMRegressor(**lgb_params2)
+            lgb_model2 = lgb.LGBMRegressor(**lgb_p2)
             lgb_model2.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
             # Inverse z-score transform
@@ -277,9 +282,13 @@ def main():
             xgb_model1 = xgb.XGBRegressor(**xgb_params)
             xgb_model1.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
-            xgb_params2 = {**xgb_params, 'max_depth': 6, 'min_child_weight': 5,
+            if j == 3:  # AC-SINS
+                xgb_p2 = {**xgb_params, 'max_depth': 5, 'min_child_weight': 8,
+                           'colsample_bytree': 0.7}
+            else:
+                xgb_p2 = {**xgb_params, 'max_depth': 6, 'min_child_weight': 5,
                            'colsample_bytree': 0.6}
-            xgb_model2 = xgb.XGBRegressor(**xgb_params2)
+            xgb_model2 = xgb.XGBRegressor(**xgb_p2)
             xgb_model2.fit(X_gbm_j[train_idx[mask]], y_tr_z)
 
             xgb_preds[:, j] = 0.5 * (xgb_model1.predict(X_gbm_j[val_idx]) +
