@@ -234,7 +234,7 @@ def main():
 
     lgb_params = {
         'objective': 'regression', 'metric': 'mse', 'verbosity': -1,
-        'n_estimators': 700, 'learning_rate': 0.04,
+        'n_estimators': 500, 'learning_rate': 0.05,
         'num_leaves': 15, 'min_child_samples': 10,
         'reg_alpha': 1.0, 'reg_lambda': 1.0,
         'subsample': 0.8, 'colsample_bytree': 0.8, 'max_depth': 4,
@@ -242,7 +242,7 @@ def main():
 
     xgb_params = {
         'objective': 'reg:squarederror', 'verbosity': 0,
-        'n_estimators': 700, 'learning_rate': 0.04,
+        'n_estimators': 500, 'learning_rate': 0.05,
         'max_depth': 4, 'min_child_weight': 10,
         'reg_alpha': 1.0, 'reg_lambda': 1.0,
         'subsample': 0.8, 'colsample_bytree': 0.8,
@@ -321,7 +321,7 @@ def main():
 
         # Per-target blend weights (Ridge stronger for HIC/PR_CHO, GBMs for Tm2/Titer)
         # Target order: HIC, Tm2, PR_CHO, AC-SINS_pH7.4, Titer
-        ridge_w = np.array([1.0, 0.0, 1.0, 0.7, 0.7])
+        ridge_w = np.array([1.0, 0.0, 1.0, 0.7, 0.8])
         gbm_w = (1.0 - ridge_w) / 2.0
         for j in range(n_targets):
             all_preds[val_idx, j] = (ridge_w[j] * ridge_preds[:, j] +
