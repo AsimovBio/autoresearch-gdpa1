@@ -152,6 +152,38 @@ def encode_chain_interactions(df):
     return X
 
 
+def encode_gap_pattern(df):
+    """Gap pattern features: number of gap blocks, longest gap, gap fraction per chain."""
+    n = len(df)
+    X = np.zeros((n, 8), dtype=np.float32)  # 4 features per chain
+    for i, (_, row) in enumerate(df.iterrows()):
+        for chain_idx, col in enumerate(["heavy_aligned_aho", "light_aligned_aho"]):
+            seq = row[col]
+            offset = chain_idx * 4
+            gaps = [c == '-' for c in seq]
+            n_gaps = sum(gaps)
+            X[i, offset] = n_gaps / len(seq)  # gap fraction
+            X[i, offset + 1] = len(seq) - n_gaps  # non-gap length
+            # Count gap blocks
+            n_blocks = 0
+            max_block = 0
+            cur_block = 0
+            for g in gaps:
+                if g:
+                    cur_block += 1
+                else:
+                    if cur_block > 0:
+                        n_blocks += 1
+                        max_block = max(max_block, cur_block)
+                        cur_block = 0
+            if cur_block > 0:
+                n_blocks += 1
+                max_block = max(max_block, cur_block)
+            X[i, offset + 2] = n_blocks
+            X[i, offset + 3] = max_block
+    return X
+
+
 def encode_codon_usage(df):
     """Codon usage frequency features from DNA sequences (HC + LC)."""
     codons = []
@@ -277,10 +309,12 @@ def main():
     X_interactions = encode_chain_interactions(df)
     print(f"  Chain interaction features: {X_interactions.shape[1]}")
 
+    X_gaps = encode_gap_pattern(df)
+    print(f"  Gap pattern features: {X_gaps.shape[1]}")
     X_codon = encode_codon_usage(df)
     print(f"  Codon usage features: {X_codon.shape[1]}")
 
-    X_ridge = np.hstack([X_composition, X_summary, X_dipeptide, X_interactions, X_codon, X_esm, X_meta])
+    X_ridge = np.hstack([X_composition, X_summary, X_dipeptide, X_interactions, X_gaps, X_codon, X_esm, X_meta])
     X_gbm = np.hstack([X_onehot, X_composition, X_summary, X_esm, X_meta])
     # Tm2-specific GBM features: add composition + physchem back (Tm2 is pure GBM)
     X_gbm_tm2 = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm, X_meta])
