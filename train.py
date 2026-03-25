@@ -152,6 +152,32 @@ def encode_chain_interactions(df):
     return X
 
 
+def encode_codon_usage(df):
+    """Codon usage frequency features from DNA sequences (HC + LC)."""
+    codons = []
+    for a in 'ACGT':
+        for b in 'ACGT':
+            for c in 'ACGT':
+                codons.append(a + b + c)
+    codon_to_idx = {c: i for i, c in enumerate(codons)}
+    n_codons = len(codons)  # 64
+    n = len(df)
+    X = np.zeros((n, 2 * n_codons), dtype=np.float32)
+    for i, (_, row) in enumerate(df.iterrows()):
+        for chain_idx, col in enumerate(["hc_dna_sequence", "lc_dna_sequence"]):
+            dna = str(row[col]).upper().replace(' ', '')
+            offset = chain_idx * n_codons
+            count = 0
+            for k in range(0, len(dna) - 2, 3):
+                codon = dna[k:k+3]
+                if codon in codon_to_idx:
+                    X[i, offset + codon_to_idx[codon]] += 1.0
+                    count += 1
+            if count > 0:
+                X[i, offset:offset + n_codons] /= count
+    return X
+
+
 def encode_summary_stats(df):
     n = len(df)
     n_stats = 2 * (N_PROPERTIES * 2 + 3)
@@ -251,7 +277,10 @@ def main():
     X_interactions = encode_chain_interactions(df)
     print(f"  Chain interaction features: {X_interactions.shape[1]}")
 
-    X_ridge = np.hstack([X_composition, X_summary, X_dipeptide, X_interactions, X_esm, X_meta])
+    X_codon = encode_codon_usage(df)
+    print(f"  Codon usage features: {X_codon.shape[1]}")
+
+    X_ridge = np.hstack([X_composition, X_summary, X_dipeptide, X_interactions, X_codon, X_esm, X_meta])
     X_gbm = np.hstack([X_onehot, X_composition, X_summary, X_esm, X_meta])
     # Tm2-specific GBM features: add composition + physchem back (Tm2 is pure GBM)
     X_gbm_tm2 = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm, X_meta])
