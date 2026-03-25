@@ -152,6 +152,99 @@ def encode_chain_interactions(df):
     return X
 
 
+def encode_charge_features(df):
+    """Extended charge features: net charge, charge asymmetry, +/- patches."""
+    n = len(df)
+    X = np.zeros((n, 10), dtype=np.float32)
+    for i, (_, row) in enumerate(df.iterrows()):
+        for chain_idx, col in enumerate(["heavy_aligned_aho", "light_aligned_aho"]):
+            seq = row[col]
+            offset = chain_idx * 5
+            non_gap = [aa for aa in seq if aa != '-']
+            if not non_gap:
+                continue
+            pos_count = sum(1 for aa in non_gap if aa in 'KRH')
+            neg_count = sum(1 for aa in non_gap if aa in 'DE')
+            total = len(non_gap)
+            X[i, offset] = (pos_count - neg_count) / total  # net charge density
+            X[i, offset + 1] = pos_count / total  # positive fraction
+            X[i, offset + 2] = neg_count / total  # negative fraction
+            # Charge patches: max consecutive same-sign residues
+            max_pos_run = max_neg_run = cur_pos = cur_neg = 0
+            for aa in non_gap:
+                if aa in 'KRH':
+                    cur_pos += 1
+                    max_pos_run = max(max_pos_run, cur_pos)
+                    cur_neg = 0
+                elif aa in 'DE':
+                    cur_neg += 1
+                    max_neg_run = max(max_neg_run, cur_neg)
+                    cur_pos = 0
+                else:
+                    cur_pos = cur_neg = 0
+            X[i, offset + 3] = max_pos_run
+            X[i, offset + 4] = max_neg_run
+    return X
+
+
+def encode_gap_pattern(df):
+    """Gap pattern features: number of gap blocks, longest gap, gap fraction per chain."""
+    n = len(df)
+    X = np.zeros((n, 8), dtype=np.float32)  # 4 features per chain
+    for i, (_, row) in enumerate(df.iterrows()):
+        for chain_idx, col in enumerate(["heavy_aligned_aho", "light_aligned_aho"]):
+            seq = row[col]
+            offset = chain_idx * 4
+            gaps = [c == '-' for c in seq]
+            n_gaps = sum(gaps)
+            X[i, offset] = n_gaps / len(seq)  # gap fraction
+            X[i, offset + 1] = len(seq) - n_gaps  # non-gap length
+            # Count gap blocks
+            n_blocks = 0
+            max_block = 0
+            cur_block = 0
+            for g in gaps:
+                if g:
+                    cur_block += 1
+                else:
+                    if cur_block > 0:
+                        n_blocks += 1
+                        max_block = max(max_block, cur_block)
+                        cur_block = 0
+            if cur_block > 0:
+                n_blocks += 1
+                max_block = max(max_block, cur_block)
+            X[i, offset + 2] = n_blocks
+            X[i, offset + 3] = max_block
+    return X
+
+
+def encode_codon_usage(df):
+    """Codon usage frequency features from DNA sequences (HC + LC)."""
+    codons = []
+    for a in 'ACGT':
+        for b in 'ACGT':
+            for c in 'ACGT':
+                codons.append(a + b + c)
+    codon_to_idx = {c: i for i, c in enumerate(codons)}
+    n_codons = len(codons)  # 64
+    n = len(df)
+    X = np.zeros((n, 2 * n_codons), dtype=np.float32)
+    for i, (_, row) in enumerate(df.iterrows()):
+        for chain_idx, col in enumerate(["hc_dna_sequence", "lc_dna_sequence"]):
+            dna = str(row[col]).upper().replace(' ', '')
+            offset = chain_idx * n_codons
+            count = 0
+            for k in range(0, len(dna) - 2, 3):
+                codon = dna[k:k+3]
+                if codon in codon_to_idx:
+                    X[i, offset + codon_to_idx[codon]] += 1.0
+                    count += 1
+            if count > 0:
+                X[i, offset:offset + n_codons] /= count
+    return X
+
+
 def encode_summary_stats(df):
     n = len(df)
     n_stats = 2 * (N_PROPERTIES * 2 + 3)
@@ -251,7 +344,14 @@ def main():
     X_interactions = encode_chain_interactions(df)
     print(f"  Chain interaction features: {X_interactions.shape[1]}")
 
-    X_ridge = np.hstack([X_composition, X_summary, X_dipeptide, X_interactions, X_esm, X_meta])
+    X_charge = encode_charge_features(df)
+    print(f"  Charge features: {X_charge.shape[1]}")
+    X_gaps = encode_gap_pattern(df)
+    print(f"  Gap pattern features: {X_gaps.shape[1]}")
+    X_codon = encode_codon_usage(df)
+    print(f"  Codon usage features: {X_codon.shape[1]}")
+
+    X_ridge = np.hstack([X_composition, X_summary, X_dipeptide, X_interactions, X_charge, X_gaps, X_codon, X_esm, X_meta])
     X_gbm = np.hstack([X_onehot, X_composition, X_summary, X_esm, X_meta])
     # Tm2-specific GBM features: add composition + physchem back (Tm2 is pure GBM)
     X_gbm_tm2 = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm, X_meta])
