@@ -152,6 +152,36 @@ def encode_chain_interactions(df):
     return X
 
 
+def encode_hydrophobic_patches(df):
+    """Hydrophobic patch features: max/mean consecutive hydrophobic runs."""
+    HYDROPHOBIC = set('AILMFWVP')
+    n = len(df)
+    X = np.zeros((n, 6), dtype=np.float32)  # 3 features per chain
+    for i, (_, row) in enumerate(df.iterrows()):
+        for chain_idx, col in enumerate(["heavy_aligned_aho", "light_aligned_aho"]):
+            seq = row[col]
+            offset = chain_idx * 3
+            non_gap = [aa for aa in seq if aa != '-']
+            if not non_gap:
+                continue
+            # Hydrophobic runs
+            runs = []
+            cur = 0
+            for aa in non_gap:
+                if aa in HYDROPHOBIC:
+                    cur += 1
+                else:
+                    if cur > 0:
+                        runs.append(cur)
+                    cur = 0
+            if cur > 0:
+                runs.append(cur)
+            X[i, offset] = max(runs) if runs else 0  # max run
+            X[i, offset + 1] = np.mean(runs) if runs else 0  # mean run
+            X[i, offset + 2] = sum(1 for aa in non_gap if aa in HYDROPHOBIC) / len(non_gap)  # fraction
+    return X
+
+
 def encode_charge_features(df):
     """Extended charge features: net charge, charge asymmetry, +/- patches."""
     n = len(df)
@@ -344,6 +374,8 @@ def main():
     X_interactions = encode_chain_interactions(df)
     print(f"  Chain interaction features: {X_interactions.shape[1]}")
 
+    X_hydro = encode_hydrophobic_patches(df)
+    print(f"  Hydrophobic patch features: {X_hydro.shape[1]}")
     X_charge = encode_charge_features(df)
     print(f"  Charge features: {X_charge.shape[1]}")
     X_gaps = encode_gap_pattern(df)
@@ -351,7 +383,7 @@ def main():
     X_codon = encode_codon_usage(df)
     print(f"  Codon usage features: {X_codon.shape[1]}")
 
-    X_ridge = np.hstack([X_composition, X_summary, X_dipeptide, X_interactions, X_charge, X_gaps, X_codon, X_esm, X_meta])
+    X_ridge = np.hstack([X_composition, X_summary, X_dipeptide, X_interactions, X_hydro, X_charge, X_gaps, X_codon, X_esm, X_meta])
     X_gbm = np.hstack([X_onehot, X_composition, X_summary, X_esm, X_meta])
     # Tm2-specific GBM features: add composition + physchem back (Tm2 is pure GBM)
     X_gbm_tm2 = np.hstack([X_onehot, X_physchem, X_composition, X_summary, X_esm, X_meta])
@@ -411,9 +443,11 @@ def main():
                 y_std = 1.0
             y_tr_z = (y_tr - y_mean) / y_std
 
-            # Ridge on raw targets (handles its own regularization)
+            # Ridge on rank-transformed targets (aligned with Spearman metric)
+            from scipy.stats import rankdata
+            y_tr_rank = rankdata(y_tr).astype(np.float32)
             ridge = RidgeCV(alphas=alphas, scoring="neg_mean_squared_error")
-            ridge.fit(X_tr_s[mask], y_tr)
+            ridge.fit(X_tr_s[mask], y_tr_rank)
             ridge_preds[:, j] = ridge.predict(X_va_s)
 
             # Select GBM features (Tm2 gets enriched feature set)
