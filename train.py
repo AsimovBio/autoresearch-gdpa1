@@ -11,6 +11,7 @@ import time
 import numpy as np
 import torch
 from sklearn.linear_model import RidgeCV
+from sklearn.kernel_ridge import KernelRidge
 import lightgbm as lgb
 import xgboost as xgb
 
@@ -449,6 +450,12 @@ def main():
             ridge = RidgeCV(alphas=alphas, scoring="neg_mean_squared_error")
             ridge.fit(X_tr_s[mask], y_tr_rank)
             ridge_preds[:, j] = ridge.predict(X_va_s)
+
+            # For Titer: blend in KernelRidge (captures nonlinear patterns)
+            if j == 4:  # Titer
+                kr = KernelRidge(alpha=1.0, kernel='rbf', gamma=1.0 / X_tr_s.shape[1])
+                kr.fit(X_tr_s[mask], y_tr_rank)
+                ridge_preds[:, j] = 0.7 * ridge_preds[:, j] + 0.3 * kr.predict(X_va_s)
 
             # Select GBM features (Tm2 gets enriched feature set)
             X_gbm_j = X_gbm_tm2 if j == 1 else X_gbm
