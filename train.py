@@ -470,14 +470,14 @@ def main():
             X_gbm_j = X_gbm_tm2 if j == 1 else X_gbm
 
             # Random Forest on rank targets using GBM features (handles sparse one-hot)
-            rf = RandomForestRegressor(n_estimators=200, max_depth=8,
+            rf = RandomForestRegressor(n_estimators=400, max_depth=8,
                                         min_samples_leaf=5, max_features=0.3,
                                         random_state=42, n_jobs=-1)
             rf.fit(X_gbm_j[train_idx[mask]], y_tr_rank)
             rf_preds[:, j] = rf.predict(X_gbm_j[val_idx])
 
             # ExtraTrees on rank targets using GBM features
-            et = ExtraTreesRegressor(n_estimators=200, max_depth=10,
+            et = ExtraTreesRegressor(n_estimators=400, max_depth=10,
                                       min_samples_leaf=3, max_features=0.5,
                                       random_state=42, n_jobs=-1)
             et.fit(X_gbm_j[train_idx[mask]], y_tr_rank)
