@@ -517,23 +517,39 @@ def main():
             xgb_preds[:, j] = 0.5 * (xgb_model1.predict(X_gbm_j[val_idx]) +
                                        xgb_model2.predict(X_gbm_j[val_idx])) * y_std + y_mean
 
-        # 6-model blend: Ridge, SVR, RF, ExtraTrees, LGB, XGB
+        # 6-model blend with per-target tree allocation
+        # Target order: HIC, Tm2, PR_CHO, AC-SINS, Titer
         ridge_total = np.array([1.0, 0.0, 1.0, 0.7, 0.9])
         svr_w = ridge_total * 0.25
         ridge_w = ridge_total * 0.75
         tree_total = 1.0 - ridge_total
-        lgb_w = tree_total * 0.25
-        xgb_w = tree_total * 0.25
-        rf_w = tree_total * 0.25
-        et_w = tree_total * 0.25
+        # RF/ET fraction of tree allocation: high for Tm2, lower for AC-SINS/Titer
+        rf_et_frac = np.array([0.5, 0.7, 0.5, 0.3, 0.3])  # per target
+        gbm_frac = 1.0 - rf_et_frac
         for j in range(n_targets):
+            rf_share = tree_total[j] * rf_et_frac[j] * 0.5
+            et_share = tree_total[j] * rf_et_frac[j] * 0.5
+            lgb_share = tree_total[j] * gbm_frac[j] * 0.5
+            xgb_share = tree_total[j] * gbm_frac[j] * 0.5
             all_preds[val_idx, j] = (ridge_w[j] * ridge_preds[:, j] +
                                       svr_w[j] * svr_preds[:, j] +
-                                      rf_w[j] * rf_preds[:, j] +
-                                      et_w[j] * et_preds[:, j] +
-                                      lgb_w[j] * lgb_preds[:, j] +
-                                      xgb_w[j] * xgb_preds[:, j])
+                                      rf_share * rf_preds[:, j] +
+                                      et_share * et_preds[:, j] +
+                                      lgb_share * lgb_preds[:, j] +
+                                      xgb_share * xgb_preds[:, j])
 
+    # KNN smoothing for Tm2 only (benefits from local ESM structure)
+    from sklearn.neighbors import NearestNeighbors
+    print("KNN smoothing Tm2 predictions...")
+    knn = NearestNeighbors(n_neighbors=6, metric='cosine')
+    knn.fit(X_esm)
+    distances, indices = knn.kneighbors(X_esm)
+    tm2_idx = 1  # Tm2 is target index 1
+    for i in range(len(all_preds)):
+        neighbor_preds = all_preds[indices[i, 1:], tm2_idx]
+        valid = ~np.isnan(neighbor_preds)
+        if valid.sum() > 0:
+            all_preds[i, tm2_idx] = 0.75 * all_preds[i, tm2_idx] + 0.25 * np.mean(neighbor_preds[valid])
     print()
 
     mean_spearman, per_target = evaluate(Y, all_preds)
