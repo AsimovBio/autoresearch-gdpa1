@@ -538,6 +538,18 @@ def main():
                                       lgb_share * lgb_preds[:, j] +
                                       xgb_share * xgb_preds[:, j])
 
+    # KNN smoothing for Tm2 only (benefits from local ESM structure)
+    from sklearn.neighbors import NearestNeighbors
+    print("KNN smoothing Tm2 predictions...")
+    knn = NearestNeighbors(n_neighbors=6, metric='cosine')
+    knn.fit(X_esm)
+    distances, indices = knn.kneighbors(X_esm)
+    tm2_idx = 1  # Tm2 is target index 1
+    for i in range(len(all_preds)):
+        neighbor_preds = all_preds[indices[i, 1:], tm2_idx]
+        valid = ~np.isnan(neighbor_preds)
+        if valid.sum() > 0:
+            all_preds[i, tm2_idx] = 0.75 * all_preds[i, tm2_idx] + 0.25 * np.mean(neighbor_preds[valid])
     print()
 
     mean_spearman, per_target = evaluate(Y, all_preds)
